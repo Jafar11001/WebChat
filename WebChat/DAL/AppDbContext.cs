@@ -47,6 +47,12 @@ namespace WebChat.DAL
                 .HasForeignKey(p => p.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            modelBuilder.Entity<Message>()
+                .HasOne(m => m.Sender)
+                .WithMany()
+                .HasForeignKey(m => m.SenderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
             // One row per person per conversation — the get-or-create DM lookup
             // relies on this, and it stops a double-click adding you twice.
             modelBuilder.Entity<ConversationParticipant>()

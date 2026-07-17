@@ -14,15 +14,36 @@ namespace WebChat.Hubs
         private readonly MessageService _messageService;
         private readonly ConversationService _conversationService;
         private readonly UserManager<AppUser> _userManager;
+        private readonly PresenceTracker _presenceTracker;
 
         public ChatHub(
             MessageService messageService,
             ConversationService conversationService,
-            UserManager<AppUser> userManager)
+            UserManager<AppUser> userManager,
+            PresenceTracker presenceTracker)
         {
             _messageService = messageService;
             _conversationService = conversationService;
             _userManager = userManager;
+            _presenceTracker = presenceTracker;
+        }
+
+        public override async Task OnConnectedAsync()
+        {
+            var userId = _userManager.GetUserId(Context.User!);
+            if (userId is not null && _presenceTracker.Connect(userId))
+                await Clients.All.SendAsync("PresenceChanged", userId, true);
+
+            await base.OnConnectedAsync();
+        }
+
+        public override async Task OnDisconnectedAsync(Exception? exception)
+        {
+            var userId = _userManager.GetUserId(Context.User!);
+            if (userId is not null && _presenceTracker.Disconnect(userId))
+                await Clients.All.SendAsync("PresenceChanged", userId, false);
+
+            await base.OnDisconnectedAsync(exception);
         }
 
         public async Task SendMessage(ChatMessageDto msg)
@@ -62,11 +83,25 @@ namespace WebChat.Hubs
                 time = entity.CreatedAt.ToString("HH:mm"),
                 sender = new
                 {
-                    name = entity.SenderName,
-                    initials = entity.SenderInitials,
-                    color = entity.SenderColor
+                    name = displayName,
+                    initials = user.Initials,
+                    color = user.Color
                 }
             });
+        }
+        public async Task MarkRead(string conversationId)
+        {
+            var userId = _userManager.GetUserId(Context.User!);
+            if (userId is null) return;
+            if (!await _conversationService.IsParticipantAsync(conversationId, userId)) return;
+
+            var readAt = await _conversationService.MarkReadAsync(conversationId, userId);
+
+            // Tell the OTHER participants (the senders) so their ✓ can become ✓✓.
+            var others = (await _conversationService.GetParticipantIdsAsync(conversationId))
+                .Where(id => id != userId);
+
+            await Clients.Users(others).SendAsync("ConversationRead", conversationId, userId, readAt);
         }
     }
 }

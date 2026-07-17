@@ -42,7 +42,7 @@ namespace WebChat.Controllers
             // Signed in is not the same as allowed to read this.
             if (!await _conversationService.IsParticipantAsync(id, meId)) return Forbid();
 
-            return Ok(await _conversationService.GetMessagesAsync(id));
+            return Ok(await _conversationService.GetMessagesAsync(id,meId));
         }
 
         public record DirectRequest(string UserId);

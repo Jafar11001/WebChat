@@ -13,5 +13,7 @@
         public bool IsOnline { get; set; }
         public string? LastMessage { get; set; }
         public string? LastMessageTime { get; set; }
+        public string? OtherUserId { get; set; }
+        public int UnreadCount { get; set; }
     }
 }

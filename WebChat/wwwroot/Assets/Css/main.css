@@ -948,6 +948,26 @@ ul, ol {
     }
 }
 
+/*MARK-READ*/
+.conv-badge {
+    display: inline-block;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--clr-badge);
+    color: var(--clr-badge-txt);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    margin-top: 4px;
+}
+
+.tick.read {
+    color: var(--clr-tick);
+}
+
 /* ═══════════════════════════════════════════════════════════════════
     USER PICKER MODAL — "New Direct Message"
  ═══════════════════════════════════════════════════════════════════ */

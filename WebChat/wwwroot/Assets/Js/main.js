@@ -123,6 +123,22 @@ async function start(attempt = 0) {
     }
 }
 
+connection.on('PresenceChanged', (userId, isOnline) => {
+    let changed = false;
+    CONVERSATIONS.forEach(c => {
+        if (c.otherUserId === userId) {
+            c.isOnline = isOnline;
+            changed = true;
+        }
+    });
+    if (!changed) return;
+
+    renderConversationList();
+
+    const active = CONVERSATIONS.find(c => c.id === activeConv);
+    if (active) updateHeader(active);
+});
+
 connection.onreconnected(() => {
     // Messages sent while we were offline aren't replayed, so resync.
     console.log('SignalR reconnected');
@@ -184,8 +200,9 @@ function renderConversationList() {
                 <div class="conv-name">${escapeHtml(conv.title)}</div>
                 <div class="conv-preview">${escapeHtml(conv.lastMessage || 'No messages yet')}</div>
             </div>
-            <div class="conv-meta">
+                      <div class="conv-meta">
                 <span class="conv-time">${escapeHtml(conv.lastMessageTime || '')}</span>
+                ${conv.unreadCount > 0 ? `<span class="conv-badge">${conv.unreadCount}</span>` : ''}
             </div>
         `;
 
@@ -220,6 +237,22 @@ function updateHeader(conv) {
     chName.textContent = conv.title;
     chStatus.textContent = conv.isOnline ? 'Active now' : 'Offline';
     chDot.classList.toggle('off', !conv.isOnline);
+}
+/* ═══════════════════════════════════════════════════════
+   MARK-READ
+═══════════════════════════════════════════════════════ */
+async function markRead(conversationId) {
+    const conv = CONVERSATIONS.find(c => c.id === conversationId);
+    if (conv && conv.unreadCount) {
+        conv.unreadCount = 0;
+        renderConversationList();
+    }
+    try {
+        await ready;
+        await connection.invoke('MarkRead', conversationId);
+    } catch (err) {
+        console.error('MarkRead failed:', err);
+    }
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -261,7 +294,7 @@ async function loadMessages(conversationId) {
 
         history.forEach(m => {
             if (m.senderId === CURRENT_USER.id) {
-                appendOutgoing(m.content, m.time, { id: m.id });
+                appendOutgoing(m.content, m.time, { id: m.id, read: m.read });
             } else {
                 appendIncoming(m.content, m.time, { initials: m.senderInitials, color: m.senderColor });
             }
@@ -296,7 +329,17 @@ connection.on('ReceiveMessage', (msg) => {
 
     updateConvPreview(msg.conversationId, msg.content, time);
 
-    if (msg.conversationId !== activeConv) return;
+    if (msg.conversationId !== activeConv) {
+        // Not looking at it — bump the badge (but never for my own messages).
+        if (msg.senderId !== CURRENT_USER.id) {
+            const conv = CONVERSATIONS.find(c => c.id === msg.conversationId);
+            if (conv) {
+                conv.unreadCount = (conv.unreadCount || 0) + 1;
+                renderConversationList();
+            }
+        }
+        return;
+    }
 
     const mine = msg.senderId === CURRENT_USER.id;
 
@@ -318,12 +361,20 @@ connection.on('ReceiveMessage', (msg) => {
     } else {
         appendIncoming(msg.content, time, msg.sender);
     }
-
+    if (msg.senderId !== CURRENT_USER.id) markRead(activeConv);
     // Don't yank someone away from history they're reading.
     if (stick) scrollBottom();
     updateScrollFab();
 });
 
+connection.on('ConversationRead', (conversationId, readerUserId, readAt) => {
+    if (conversationId !== activeConv) return;
+    // Everyone caught up — flip every outgoing tick to ✓✓.
+    messages.querySelectorAll('.ts-row.out .tick').forEach(t => {
+        t.classList.add('read');
+        t.textContent = '✓✓';
+    });
+});
 /* ═══════════════════════════════════════════════════════
    SWITCH CONVERSATION
 ═══════════════════════════════════════════════════════ */
@@ -341,6 +392,7 @@ function switchConv(id) {
 
     updateHeader(conv);
     loadMessages(id);
+    markRead(id);
     msgField.focus();
 }
 
@@ -398,7 +450,7 @@ function updateConvPreview(conversationId, text, time) {
 /* ═══════════════════════════════════════════════════════
    RENDER MESSAGE ROWS
 ═══════════════════════════════════════════════════════ */
-function appendOutgoing(text, time, { id, clientId, pending } = {}) {
+function appendOutgoing(text, time, { id, clientId, pending, read } = {}) {
     const el = document.createElement('div');
     el.className = 'msg-group' + (pending ? ' pending' : '');
     if (id != null) el.dataset.msgId = id;
@@ -410,7 +462,7 @@ function appendOutgoing(text, time, { id, clientId, pending } = {}) {
             <div class="bubble">${escapeHtml(text)}</div>
         </div>
         <div class="ts-row out">
-            <span class="ts">${escapeHtml(time)} <span class="tick">✓</span></span>
+                        <span class="ts">${escapeHtml(time)} <span class="tick${read ? ' read' : ''}">${read ? '✓✓' : '✓'}</span></span>
         </div>
     `;
 

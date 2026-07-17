@@ -18,5 +18,10 @@ namespace WebChat.Models
         public AppUser? User { get; set; }
 
         public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
+
+        // When this user last read this conversation. Null = never opened.
+        // Drives unread counts now, and read receipts in the next step.
+        public DateTime? LastReadAt { get; set; }
+
     }
 }

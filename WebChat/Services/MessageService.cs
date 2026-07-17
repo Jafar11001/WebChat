@@ -24,9 +24,6 @@ namespace WebChat.Services
             {
                 ConversationId = conversationId,
                 SenderId = senderId,
-                SenderName = senderName,
-                SenderInitials = senderInitials,
-                SenderColor = senderColor,
                 Content = content,
                 CreatedAt = DateTime.UtcNow
             };

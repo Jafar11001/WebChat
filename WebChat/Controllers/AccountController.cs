@@ -1,8 +1,9 @@
 ﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using WebApplication4.Helpers;
+using WebChat.Helpers;
 using WebChat.Entities;
 using WebChat.ViewModels.Account;
+using WebApplication4.Helpers;
 
 namespace WebChat.Controllers
 {
@@ -35,7 +36,10 @@ namespace WebChat.Controllers
                 FullName = registerVM.FullName,
                 UserName = registerVM.UserName,
                 Email = registerVM.Email
+               
             };
+            newUser.Initials = AvatarHelper.Initials(registerVM.FullName);
+            newUser.Color = AvatarHelper.Color(newUser.Id);
 
             IdentityResult identityResult = await _userManager.CreateAsync(newUser, registerVM.Password);
 
@@ -51,7 +55,7 @@ namespace WebChat.Controllers
             // If the role assignment fails the account must not survive, or the
             // user is left with a half-registered login they were never signed
             // in to and can't re-register over.
-            IdentityResult roleResult = await _userManager.AddToRoleAsync(newUser, RoleEnum.Member.ToString());
+            IdentityResult roleResult = await _userManager.AddToRoleAsync(newUser,RoleEnum.Member.ToString());
 
             if (!roleResult.Succeeded)
             {

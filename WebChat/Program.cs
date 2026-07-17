@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using WebApplication4.Helpers;
 using WebChat.DAL;
 using WebChat.Entities;
+using WebChat.Helpers;
 using WebChat.Hubs;
 using WebChat.Services;
 
@@ -19,6 +20,8 @@ builder.Services.AddDbContext<AppDbContext>(
                 });
 
 builder.Services.AddAuthorization();
+
+builder.Services.AddSingleton<PresenceTracker>();
 
 //M10: Adding ASP.NET Core Identity services for user authentication and management.
 builder.Services.AddIdentity<AppUser, IdentityRole>(options =>
@@ -58,6 +61,8 @@ builder.Services.ConfigureApplicationCookie(options =>
     };
 });
 
+
+
 //M8 : Adding Entity Framework Core with SQL database provider for data access.
 builder.Services.AddScoped<MessageService>();
 builder.Services.AddScoped<ConversationService>();
@@ -80,6 +85,18 @@ var app = builder.Build();
 //    creates roles that are missing.
 using (var scope = app.Services.CreateScope())
 {
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+    foreach (var u in userManager.Users.ToList())
+    {
+        if (string.IsNullOrEmpty(u.Initials) || string.IsNullOrEmpty(u.Color))
+        {
+            var name = string.IsNullOrWhiteSpace(u.FullName) ? u.UserName! : u.FullName;
+            u.Initials = AvatarHelper.Initials(name);
+            u.Color = AvatarHelper.Color(u.Id);
+            await userManager.UpdateAsync(u);
+        }
+    }
+
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
 
     foreach (var role in Enum.GetNames<RoleEnum>())

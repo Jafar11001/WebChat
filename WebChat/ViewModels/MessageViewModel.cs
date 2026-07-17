@@ -11,5 +11,7 @@
         public string? SenderColor { get; set; }
         public string Content { get; set; } = default!;
         public string Time { get; set; } = default!;
+        public bool Read { get; set; }
+
     }
 }

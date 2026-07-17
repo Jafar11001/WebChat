@@ -10,9 +10,11 @@ namespace WebChat.Services
     {
         private readonly AppDbContext _db;
 
-        public ConversationService(AppDbContext db)
+        private readonly PresenceTracker _presenceTracker;
+        public ConversationService(AppDbContext db, PresenceTracker presenceTracker)
         {
             _db = db;
+            _presenceTracker = presenceTracker;
         }
 
         // Powers GET /api/conversations — scoped to conversations the caller is
@@ -37,7 +39,14 @@ namespace WebChat.Services
                     Last = c.Messages
                         .OrderByDescending(m => m.CreatedAt)
                         .Select(m => new { m.Content, m.CreatedAt })
-                        .FirstOrDefault()
+                        .FirstOrDefault(),
+                    Unread = c.Messages.Count(m => m.SenderId != userId
+                    && m.CreatedAt > (c.Participants
+                    .Where(p => p.UserId == userId)
+                    .Select(p => (DateTime?)p.LastReadAt)
+                    .FirstOrDefault() ?? DateTime.MinValue))
+
+
                 })
                 .ToListAsync();
 
@@ -49,9 +58,9 @@ namespace WebChat.Services
                     {
                         Id = c.Id,
                         IsGroup = c.IsGroup,
-                        IsOnline = c.IsOnline,
                         LastMessage = c.Last?.Content,
-                        LastMessageTime = c.Last?.CreatedAt.ToString("HH:mm")
+                        LastMessageTime = c.Last?.CreatedAt.ToString("HH:mm"),
+                        UnreadCount = c.Unread
                     };
 
                     var other = c.Others.FirstOrDefault();
@@ -63,12 +72,15 @@ namespace WebChat.Services
                         vm.Title = name;
                         vm.AvatarInitials = AvatarHelper.Initials(name);
                         vm.AvatarColor = AvatarHelper.Color(other.UserId);
+                        vm.OtherUserId = other.UserId;
+                        vm.IsOnline = _presenceTracker.IsOnline(other.UserId);
                     }
                     else
                     {
                         vm.Title = c.Title ?? "Conversation";
                         vm.AvatarInitials = c.AvatarInitials ?? AvatarHelper.Initials(c.Title);
                         vm.AvatarColor = c.AvatarColor ?? AvatarHelper.Color(c.Id);
+                        vm.IsOnline= c.Others.Any(o => _presenceTracker.IsOnline(o.UserId));
                     }
 
                     return vm;
@@ -77,23 +89,45 @@ namespace WebChat.Services
         }
 
         // Powers GET /api/conversations/{id}/messages.
-        public async Task<List<MessageViewModel>> GetMessagesAsync(string conversationId)
+        public async Task<List<MessageViewModel>> GetMessagesAsync(string conversationId, string userId)
         {
-            return await _db.Messages
+            // When have the OTHER participants read up to? A message of mine is
+            // "read" once everyone else's LastReadAt is at or past its timestamp.
+            var others = await _db.ConversationParticipants
+                .Where(p => p.ConversationId == conversationId && p.UserId != userId)
+                .Select(p => p.LastReadAt)
+                .ToListAsync();
+
+            var raw = await _db.Messages
                 .Where(m => m.ConversationId == conversationId)
                 .OrderBy(m => m.CreatedAt)
-                .Select(m => new MessageViewModel
+                .Select(m => new
                 {
-                    Id = m.Id,
-                    ConversationId = m.ConversationId,
-                    SenderId = m.SenderId,
-                    SenderName = m.SenderName,
-                    SenderInitials = m.SenderInitials,
-                    SenderColor = m.SenderColor,
-                    Content = m.Content,
-                    Time = m.CreatedAt.ToString("HH:mm")
+                    m.Id,
+                    m.ConversationId,
+                    m.SenderId,
+                    m.Sender!.FullName,
+                    m.Sender.Initials,
+                    m.Sender.Color,
+                    m.Content,
+                    m.CreatedAt
                 })
                 .ToListAsync();
+
+            return raw.Select(m => new MessageViewModel
+            {
+                Id = m.Id,
+                ConversationId = m.ConversationId,
+                SenderId = m.SenderId,
+                SenderName = m.FullName,
+                SenderInitials = m.Initials,
+                SenderColor = m.Color,
+                Content = m.Content,
+                Time = m.CreatedAt.ToString("HH:mm"),
+                Read = m.SenderId == userId
+                       && others.Count > 0
+                       && others.All(lr => lr.HasValue && lr.Value >= m.CreatedAt)
+            }).ToList();
         }
 
         public async Task<bool> ConversationExistsAsync(string conversationId)
@@ -160,6 +194,20 @@ namespace WebChat.Services
         {
             var all = await GetConversationsAsync(userId);
             return all.FirstOrDefault(c => c.Id == conversationId);
+        }
+
+        public async Task<DateTime> MarkReadAsync(string conversationId, string userId)
+        {
+            var now = DateTime.UtcNow;
+
+            var participant = await _db.ConversationParticipants
+                .FirstOrDefaultAsync(p => p.ConversationId == conversationId && p.UserId == userId);
+
+            if (participant is null) return now;
+
+            participant.LastReadAt = now;
+            await _db.SaveChangesAsync();
+            return now;
         }
     }
 }
