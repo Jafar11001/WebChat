@@ -1,6 +1,5 @@
 ﻿using WebChat.DAL;
 using WebChat.Models;
-using WebChat.Models;
 
 namespace WebChat.Services
 {
@@ -13,12 +12,21 @@ namespace WebChat.Services
             _appDbContext = db;
         }
 
-        public async Task<Message> SaveMessage(string conversationId, string senderId, string content)
+        public async Task<Message> SaveMessage(
+            string conversationId,
+            string senderId,
+            string content,
+            string? senderName = null,
+            string? senderInitials = null,
+            string? senderColor = null)
         {
             var msg = new Message
             {
                 ConversationId = conversationId,
                 SenderId = senderId,
+                SenderName = senderName,
+                SenderInitials = senderInitials,
+                SenderColor = senderColor,
                 Content = content,
                 CreatedAt = DateTime.UtcNow
             };

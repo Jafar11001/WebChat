@@ -1,4 +1,5 @@
-﻿@{
+﻿@model WebChat.ViewModels.CurrentUserViewModel
+@{
     ViewData["Title"] = "Index";
 }
 <!DOCTYPE html>
@@ -25,11 +26,11 @@
             <!-- App menu dropdown -->
             <div id="app-menu" role="dialog" aria-modal="true" aria-label="App menu">
                 <div class="menu-profile">
-                    <div class="av av-xs" id="current-user-av" style="background:#E1306C;">CP</div>
+                    <!-- avatar/name/email are set by JS from CONFIG.CURRENT_USER — no hardcoded user data in markup -->
+                    <div class="av av-xs" id="current-user-av"></div>
                     <div>
-                        <!-- data-user-id → populated from /api/me -->
-                        <div class="menu-profile-name" id="current-user-name">Cristal Parker</div>
-                        <div class="menu-profile-sub" id="current-user-email">cristal@example.com</div>
+                        <div class="menu-profile-name" id="current-user-name"></div>
+                        <div class="menu-profile-sub" id="current-user-email"></div>
                     </div>
                 </div>
                 <ul>
@@ -101,42 +102,25 @@
                 </div>
             </div>
 
-            <!-- conversation list  ←  populated from /api/conversations -->
+            <!-- conversation list — intentionally empty.
+                 JS is the single source of truth: renderConversationList() in main.js
+                 populates this <ul> entirely from the CONVERSATIONS data (data-conv-id,
+                 data-user-id, avatar, name, preview, time all come from JS, never HTML). -->
             <div class="list-section-label">Recent</div>
-            <ul id="conv-list" role="listbox" aria-label="Conversations">
-
-                <!-- data-conv-id → matches backend conversation.id -->
-                <!-- data-user-id  → the other participant (DM) or null (group) -->
-                <li class="conv-item"
-                    data-conv-id="conv_001" data-user-id="usr_kuphal"
-                    role="option" aria-selected="true" tabindex="0">
-                    <div class="av-wrap">
-                        <div class="av av-lg" style="background:#1877F2;">BK</div>
-                        <span class="online-dot"></span>
-                    </div>
-                    <div class="conv-body">
-                        <div class="conv-name">Bill Kuphal</div>
-                        <div class="conv-preview">The weather will be perfect for th…</div>
-                    </div>
-                    <div class="conv-meta">
-                        <span class="conv-time">9:41 AM</span>
-                    </div>
-                </li>
-
-               
-
-            </ul>
+            <ul id="conv-list" role="listbox" aria-label="Conversations"></ul>
         </aside><!-- /#sidebar -->
         <!-- ┌─────────────────────────────────────────────────────────────┐
              │  CHAT PANEL                                                  │
              └─────────────────────────────────────────────────────────────┘ -->
         <section id="chat-panel" style="position:relative;">
 
-            <!-- chat header — data-conv-id synced with active conversation -->
-            <header id="chat-header" data-conv-id="conv_001">
+            <!-- chat header — no default conversation.
+                 data-conv-id, avatar, name, and status are all set by JS in main.js
+                 (updateHeader / resetHeader) once a conversation is selected. -->
+            <header id="chat-header" class="is-empty">
                 <div class="av-wrap">
-                    <div class="av av-md" id="ch-av" style="background:#1877F2;">BK</div>
-                    <span class="online-dot chat" id="ch-online-dot"></span>
+                    <div class="av av-md" id="ch-av"></div>
+                    <span class="online-dot chat" id="ch-online-dot" style="display:none;"></span>
                 </div>
                 <div class="ch-info">
                     <div class="ch-name" id="ch-name"></div>
@@ -219,6 +203,34 @@
         </section><!-- /#chat-panel -->
 
     </div><!-- /#app -->
+
+    <!-- New Direct Message picker. Populated by JS from GET /api/users. -->
+    <div id="user-picker" class="modal-backdrop" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-picker-title">
+            <div class="modal-head">
+                <h2 class="modal-title" id="user-picker-title">New Direct Message</h2>
+                <button class="btn-icon" id="user-picker-close" aria-label="Close">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <input type="search" class="modal-search" id="user-picker-search"
+                   placeholder="Search people" aria-label="Search people" autocomplete="off" />
+            <ul class="user-list" id="user-list" role="listbox" aria-label="People"></ul>
+        </div>
+    </div>
+    <!-- Sign-out is a POST (a GET logout is CSRF-able). The Sign Out menu item
+         submits this form so the antiforgery token rides along. -->
+    <form id="logout-form" action="@Url.Action("Logout", "Account")" method="post" hidden>
+        @Html.AntiForgeryToken()
+    </form>
+
+    <!-- The signed-in user, straight from Identity. main.js reads this instead
+         of the fake CONFIG.CURRENT_USER it used before auth existed. -->
+    <script>
+        window.CURRENT_USER = @Html.Raw(Json.Serialize(Model));
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
     <script src="~/Assets/Js/main.js"></script>
 </body>

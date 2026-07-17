@@ -1,0 +1,165 @@
+using Microsoft.EntityFrameworkCore;
+using WebChat.DAL;
+using WebChat.Helpers;
+using WebChat.Models;
+using WebChat.ViewModels;
+
+namespace WebChat.Services
+{
+    public class ConversationService
+    {
+        private readonly AppDbContext _db;
+
+        public ConversationService(AppDbContext db)
+        {
+            _db = db;
+        }
+
+        // Powers GET /api/conversations — scoped to conversations the caller is
+        // actually in. Sorted by most recent activity, with the preview computed
+        // from the Messages table so nothing goes stale.
+        public async Task<List<ConversationViewModel>> GetConversationsAsync(string userId)
+        {
+            var raw = await _db.Conversations
+                .Where(c => c.Participants.Any(p => p.UserId == userId))
+                .Select(c => new
+                {
+                    c.Id,
+                    c.Title,
+                    c.AvatarInitials,
+                    c.AvatarColor,
+                    c.IsGroup,
+                    c.IsOnline,
+                    Others = c.Participants
+                        .Where(p => p.UserId != userId)
+                        .Select(p => new { p.UserId, p.User!.FullName, p.User.UserName })
+                        .ToList(),
+                    Last = c.Messages
+                        .OrderByDescending(m => m.CreatedAt)
+                        .Select(m => new { m.Content, m.CreatedAt })
+                        .FirstOrDefault()
+                })
+                .ToListAsync();
+
+            return raw
+                .OrderByDescending(c => c.Last?.CreatedAt ?? DateTime.MinValue)
+                .Select(c =>
+                {
+                    var vm = new ConversationViewModel
+                    {
+                        Id = c.Id,
+                        IsGroup = c.IsGroup,
+                        IsOnline = c.IsOnline,
+                        LastMessage = c.Last?.Content,
+                        LastMessageTime = c.Last?.CreatedAt.ToString("HH:mm")
+                    };
+
+                    var other = c.Others.FirstOrDefault();
+
+                    if (!c.IsGroup && other is not null)
+                    {
+                        // A DM is titled after the person you're talking to.
+                        var name = string.IsNullOrWhiteSpace(other.FullName) ? other.UserName! : other.FullName;
+                        vm.Title = name;
+                        vm.AvatarInitials = AvatarHelper.Initials(name);
+                        vm.AvatarColor = AvatarHelper.Color(other.UserId);
+                    }
+                    else
+                    {
+                        vm.Title = c.Title ?? "Conversation";
+                        vm.AvatarInitials = c.AvatarInitials ?? AvatarHelper.Initials(c.Title);
+                        vm.AvatarColor = c.AvatarColor ?? AvatarHelper.Color(c.Id);
+                    }
+
+                    return vm;
+                })
+                .ToList();
+        }
+
+        // Powers GET /api/conversations/{id}/messages.
+        public async Task<List<MessageViewModel>> GetMessagesAsync(string conversationId)
+        {
+            return await _db.Messages
+                .Where(m => m.ConversationId == conversationId)
+                .OrderBy(m => m.CreatedAt)
+                .Select(m => new MessageViewModel
+                {
+                    Id = m.Id,
+                    ConversationId = m.ConversationId,
+                    SenderId = m.SenderId,
+                    SenderName = m.SenderName,
+                    SenderInitials = m.SenderInitials,
+                    SenderColor = m.SenderColor,
+                    Content = m.Content,
+                    Time = m.CreatedAt.ToString("HH:mm")
+                })
+                .ToListAsync();
+        }
+
+        public async Task<bool> ConversationExistsAsync(string conversationId)
+        {
+            return await _db.Conversations.AnyAsync(c => c.Id == conversationId);
+        }
+
+        // The authorisation check for every read and every send. Being signed in
+        // is not enough — you must be in the conversation.
+        public async Task<bool> IsParticipantAsync(string conversationId, string userId)
+        {
+            return await _db.ConversationParticipants
+                .AnyAsync(p => p.ConversationId == conversationId && p.UserId == userId);
+        }
+
+        // Who a message should be delivered to. The hub addresses participants
+        // directly rather than a SignalR group, so a recipient who doesn't have
+        // the conversation open still gets it — otherwise the first message of a
+        // new DM would never reach them.
+        public async Task<List<string>> GetParticipantIdsAsync(string conversationId)
+        {
+            return await _db.ConversationParticipants
+                .Where(p => p.ConversationId == conversationId)
+                .Select(p => p.UserId)
+                .ToListAsync();
+        }
+
+        // Opening a DM twice must land on the same conversation, not create a
+        // second one, so this looks for the existing pair first.
+        public async Task<string> GetOrCreateDirectAsync(string userId, string otherUserId)
+        {
+            if (userId == otherUserId)
+                throw new InvalidOperationException("Cannot open a direct message with yourself.");
+
+            var existing = await _db.Conversations
+                .Where(c => !c.IsGroup
+                            && c.Participants.Count == 2
+                            && c.Participants.Any(p => p.UserId == userId)
+                            && c.Participants.Any(p => p.UserId == otherUserId))
+                .Select(c => c.Id)
+                .FirstOrDefaultAsync();
+
+            if (existing is not null) return existing;
+
+            var conversation = new Conversation
+            {
+                Id = Guid.NewGuid().ToString("n"),
+                IsGroup = false,
+                CreatedAt = DateTime.UtcNow,
+                Participants =
+                {
+                    new ConversationParticipant { UserId = userId },
+                    new ConversationParticipant { UserId = otherUserId }
+                }
+            };
+
+            _db.Conversations.Add(conversation);
+            await _db.SaveChangesAsync();
+
+            return conversation.Id;
+        }
+
+        public async Task<ConversationViewModel?> GetConversationForUserAsync(string conversationId, string userId)
+        {
+            var all = await GetConversationsAsync(userId);
+            return all.FirstOrDefault(c => c.Id == conversationId);
+        }
+    }
+}
