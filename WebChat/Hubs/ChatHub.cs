@@ -32,16 +32,22 @@ namespace WebChat.Hubs
         {
             var userId = _userManager.GetUserId(Context.User!);
             if (userId is not null && _presenceTracker.Connect(userId))
-                await Clients.All.SendAsync("PresenceChanged", userId, true);
+                await Clients.All.SendAsync("PresenceChanged", userId, true, (string?)null);
 
             await base.OnConnectedAsync();
         }
 
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
-            var userId = _userManager.GetUserId(Context.User!);
-            if (userId is not null && _presenceTracker.Disconnect(userId))
-                await Clients.All.SendAsync("PresenceChanged", userId, false);
+            var user = await _userManager.GetUserAsync(Context.User!);
+            if (user is not null && _presenceTracker.Disconnect(user.Id))
+            {
+                user.LastSeenAt = DateTime.UtcNow;
+                await _userManager.UpdateAsync(user);
+
+                await Clients.All.SendAsync("PresenceChanged",
+                    user.Id, false, user.LastSeenAt.Value.ToString("HH:mm"));
+            }
 
             await base.OnDisconnectedAsync(exception);
         }
@@ -101,7 +107,21 @@ namespace WebChat.Hubs
             var others = (await _conversationService.GetParticipantIdsAsync(conversationId))
                 .Where(id => id != userId);
 
-            await Clients.Users(others).SendAsync("ConversationRead", conversationId, userId, readAt);
+            await Clients.Users(others).SendAsync("ConversationRead", conversationId, userId, readAt.ToString("HH:mm"));
         }
+              
+        
+        public async Task Typing(string conversationId, bool isTyping)
+        {
+            var userId = _userManager.GetUserId(Context.User!);
+            if (userId is null) return;
+            if (!await _conversationService.IsParticipantAsync(conversationId, userId)) return;
+
+            var others = (await _conversationService.GetParticipantIdsAsync(conversationId))
+                .Where(id => id != userId);
+
+            await Clients.Users(others).SendAsync("Typing", conversationId, userId, isTyping);
+        }
+
     }
 }

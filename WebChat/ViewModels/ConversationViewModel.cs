@@ -15,5 +15,7 @@
         public string? LastMessageTime { get; set; }
         public string? OtherUserId { get; set; }
         public int UnreadCount { get; set; }
+        public string? OtherLastReadTime { get; set; }
+        public string? OtherLastSeenTime { get; set; }
     }
 }

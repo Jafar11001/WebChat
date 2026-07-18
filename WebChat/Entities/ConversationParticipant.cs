@@ -23,5 +23,6 @@ namespace WebChat.Models
         // Drives unread counts now, and read receipts in the next step.
         public DateTime? LastReadAt { get; set; }
 
+
     }
 }

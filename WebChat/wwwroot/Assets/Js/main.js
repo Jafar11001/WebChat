@@ -111,6 +111,43 @@ const connection = new signalR.HubConnectionBuilder()
 
 let ready = start();
 
+/* ═══════════════════════════════════════════════════════
+   TYPING — sender side
+   Three ways out of "typing": you pause (1.5s), you send,
+   or you switch conversation. All three emit the stop.
+═══════════════════════════════════════════════════════ */
+let typingSentAt = 0;
+let stopTypingTimer = null;
+
+function stopTypingNow(conversationId) {
+    clearTimeout(stopTypingTimer);
+    stopTypingTimer = null;
+    if (typingSentAt === 0) return;           // never told them we started
+    typingSentAt = 0;
+    connection.invoke('Typing', conversationId, false).catch(() => { });
+}
+
+msgField.addEventListener('input', () => {
+    if (!activeConv) return;
+
+    // Deleting everything counts as stopping.
+    if (!msgField.value.trim()) {
+        stopTypingNow(activeConv);
+        return;
+    }
+
+    // Re-announce every 2s while active, so the receiver's safety
+    // timeout can be short without cutting off long typers.
+    const now = Date.now();
+    if (now - typingSentAt > 2000) {
+        typingSentAt = now;
+        connection.invoke('Typing', activeConv, true).catch(() => { });
+    }
+
+    clearTimeout(stopTypingTimer);
+    stopTypingTimer = setTimeout(() => stopTypingNow(activeConv), 1500);
+});
+
 async function start(attempt = 0) {
     try {
         await connection.start();
@@ -168,7 +205,26 @@ async function loadConversations() {
 
     renderConversationList();
 }
+let typingTimer = null;
 
+function showTyping(meta) {
+    hideTyping();
+    const el = document.createElement('div');
+    el.className = 'typing-row';
+    el.id = 'typing-indicator';
+    el.innerHTML = `
+        <div class="msg-av-wrap">
+            <div class="av av-sm" style="background:${safeColor(meta?.color)};">${escapeHtml(meta?.initials || '??')}</div>
+        </div>
+        <div class="typing-bub"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+    `;
+    messages.appendChild(el);
+    if (isNearBottom()) scrollBottom();
+}
+
+function hideTyping() {
+    document.getElementById('typing-indicator')?.remove();
+}
 function renderConversationList() {
     const q = searchQuery.trim().toLowerCase();
     const visible = q
@@ -235,7 +291,9 @@ function updateHeader(conv) {
     chOnlineDot.style.display = conv.isOnline ? '' : 'none';
 
     chName.textContent = conv.title;
-    chStatus.textContent = conv.isOnline ? 'Active now' : 'Offline';
+    chStatus.textContent = conv.isOnline
+        ? 'Active now'
+        : (conv.otherLastSeenTime ? `Last seen ${conv.otherLastSeenTime}` : 'Offline');
     chDot.classList.toggle('off', !conv.isOnline);
 }
 /* ═══════════════════════════════════════════════════════
@@ -272,7 +330,20 @@ function renderEmptyState(title, sub) {
     messages.appendChild(el);
     updateScrollFab();
 }
+function renderSeenReceipt(timeStr) {
+    messages.querySelector('.seen-receipt')?.remove();
+    if (!timeStr) return;
 
+    // Only under the last message, and only if that message is mine.
+    const groups = messages.querySelectorAll('.msg-group');
+    const last = groups[groups.length - 1];
+    if (!last || !last.querySelector('.msg-row.out')) return;
+
+    const el = document.createElement('div');
+    el.className = 'seen-receipt';
+    el.textContent = `Seen ${timeStr}`;
+    messages.appendChild(el);
+}
 async function loadMessages(conversationId) {
     renderEmptyState('Loading messages…', '');
 
@@ -301,13 +372,50 @@ async function loadMessages(conversationId) {
         });
 
         scrollBottom();
+
+        const conv = CONVERSATIONS.find(c => c.id === conversationId);
+        const last = history[history.length - 1];
+        if (conv && last && last.senderId === CURRENT_USER.id && last.read) {
+            renderSeenReceipt(conv.otherLastReadTime);
+        }
     } catch (err) {
         console.error('Failed to load messages:', err);
         if (conversationId !== activeConv) return;
         renderEmptyState('Failed to load messages', 'Please try again');
     }
 }
+//PresenceChanged is sent when a user goes online or offline. The server also sends the last seen time when a user goes offline, so we can update the sidebar and header accordingly.
+connection.on('PresenceChanged', (userId, isOnline, lastSeenTime) => {
+    let changed = false;
+    CONVERSATIONS.forEach(c => {
+        if (c.otherUserId === userId) {
+            c.isOnline = isOnline;
+            if (!isOnline && lastSeenTime) c.otherLastSeenTime = lastSeenTime;
+            changed = true;
+        }
+    });
+    if (!changed) return;
 
+    renderConversationList();
+
+    const active = CONVERSATIONS.find(c => c.id === activeConv);
+    if (active) updateHeader(active);
+});
+//TYPING
+connection.on('Typing', (conversationId, userId, isTyping) => {
+    if (conversationId !== activeConv) return;
+
+    if (isTyping) {
+        const conv = CONVERSATIONS.find(c => c.id === conversationId);
+        showTyping({ initials: conv?.avatarInitials, color: conv?.avatarColor });
+        // Safety net only, in case a "stop" packet is lost.
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(hideTyping, 800);
+    } else {
+        clearTimeout(typingTimer);
+        hideTyping();
+    }
+});
 /* ═══════════════════════════════════════════════════════
    RECEIVE MESSAGE (SignalR)
    The hub broadcasts to the whole group — including the sender.
@@ -331,6 +439,7 @@ connection.on('ReceiveMessage', (msg) => {
 
     if (msg.conversationId !== activeConv) {
         // Not looking at it — bump the badge (but never for my own messages).
+        hideTyping();
         if (msg.senderId !== CURRENT_USER.id) {
             const conv = CONVERSATIONS.find(c => c.id === msg.conversationId);
             if (conv) {
@@ -367,21 +476,28 @@ connection.on('ReceiveMessage', (msg) => {
     updateScrollFab();
 });
 
-connection.on('ConversationRead', (conversationId, readerUserId, readAt) => {
+connection.on('ConversationRead', (conversationId, readerUserId, readTime) => {
+    const conv = CONVERSATIONS.find(c => c.id === conversationId);
+    if (conv) conv.otherLastReadTime = readTime;
+
     if (conversationId !== activeConv) return;
-    // Everyone caught up — flip every outgoing tick to ✓✓.
+
     messages.querySelectorAll('.ts-row.out .tick').forEach(t => {
         t.classList.add('read');
         t.textContent = '✓✓';
     });
+
+    renderSeenReceipt(readTime);
 });
 /* ═══════════════════════════════════════════════════════
    SWITCH CONVERSATION
 ═══════════════════════════════════════════════════════ */
 function switchConv(id) {
+    hideTyping();
+    clearTimeout(typingTimer);
     const conv = CONVERSATIONS.find(c => c.id === id);
     if (!conv || id === activeConv) return;
-
+    stopTypingNow(activeConv);
     activeConv = id;
 
     document.querySelectorAll('.conv-item').forEach(el => {
@@ -404,8 +520,9 @@ function switchConv(id) {
 async function sendMessage() {
     const text = msgField.value.trim();
     if (!text || !activeConv) return;
-
+    
     const conversationId = activeConv;
+    stopTypingNow(conversationId);
     const clientId = newClientId();
     const time = nowTime();
 
@@ -451,6 +568,7 @@ function updateConvPreview(conversationId, text, time) {
    RENDER MESSAGE ROWS
 ═══════════════════════════════════════════════════════ */
 function appendOutgoing(text, time, { id, clientId, pending, read } = {}) {
+    messages.querySelector('.seen-receipt')?.remove();
     const el = document.createElement('div');
     el.className = 'msg-group' + (pending ? ' pending' : '');
     if (id != null) el.dataset.msgId = id;
@@ -470,6 +588,7 @@ function appendOutgoing(text, time, { id, clientId, pending, read } = {}) {
 }
 
 function appendIncoming(text, time, meta) {
+    messages.querySelector('.seen-receipt')?.remove();
     const el = document.createElement('div');
     el.className = 'msg-group';
 

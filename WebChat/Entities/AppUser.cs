@@ -8,6 +8,8 @@ namespace WebChat.Entities
 
         public string Initials { get; set; }
 
-        public string Color { get; set; }  
+        public string Color { get; set; }
+
+        public DateTime? LastSeenAt { get; set; }
     }
 }

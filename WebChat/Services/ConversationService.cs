@@ -34,7 +34,7 @@ namespace WebChat.Services
                     c.IsOnline,
                     Others = c.Participants
                         .Where(p => p.UserId != userId)
-                        .Select(p => new { p.UserId, p.User!.FullName, p.User.UserName })
+                        .Select(p => new { p.UserId, p.User!.FullName, p.User.UserName,p.LastReadAt,p.User.LastSeenAt})
                         .ToList(),
                     Last = c.Messages
                         .OrderByDescending(m => m.CreatedAt)
@@ -73,7 +73,9 @@ namespace WebChat.Services
                         vm.AvatarInitials = AvatarHelper.Initials(name);
                         vm.AvatarColor = AvatarHelper.Color(other.UserId);
                         vm.OtherUserId = other.UserId;
+                        vm.OtherLastReadTime = other.LastReadAt?.ToString("HH:mm");
                         vm.IsOnline = _presenceTracker.IsOnline(other.UserId);
+                        vm.OtherLastSeenTime = other.LastSeenAt?.ToString("HH:mm");
                     }
                     else
                     {
